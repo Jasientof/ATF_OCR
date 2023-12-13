@@ -7,6 +7,11 @@ import pytesseract
 from PIL import Image
 import re
 from pdf2image import convert_from_path
+import threading
+import shutil
+from queue import Queue
+import time
+
 
 pytesseract.pytesseract.tesseract_cmd = r"lib\tesseract\tesseract.exe"
 
@@ -61,38 +66,64 @@ def start_processing():
         log_message("Please select files and an output folder.")
         return
 
-    processed_count = 0
-    found_count = 0
-    not_found_count = 0
-
+    log_message("Starting OCR processing...")
+    file_queue = Queue()
     for file_path in selected_files:
-        text = process_pdf(file_path)
-        file_id = None
+        file_queue.put(file_path)
 
-        # Apply regex patterns to text to find the ID
-        for key, pattern in regex_patterns.items():
-            match = pattern.search(text)
-            if match:
-                file_id = match.group()
-                found_count += 1
-                break
+    processed_count = [0]  # Using a list as a mutable object
+    found_count = [0]
+    not_found_count = [0]
 
-        # Determine the new filename
-        if file_id:
-            new_filename = file_id
+    def process_file_thread():
+        while not file_queue.empty():
+            file_path = file_queue.get()
+            text = process_pdf(file_path)
+            file_id = None
+
+            # Apply regex patterns to text to find the ID
+            for key, pattern in regex_patterns.items():
+                match = pattern.search(text)
+                if match:
+                    file_id = match.group()
+                    # Special handling for 'MAN' category
+                    if key == 'MAN' and file_id[0] == 'O':
+                        file_id = '0' + file_id[1:]
+                    found_count[0] += 1
+                    break
+
+            if file_id:
+                new_filename = file_id
+            else:
+                not_found_count[0] += 1
+                new_filename = f'not_found{not_found_count[0]}'
+
+            new_file_path = os.path.join(output_folder, new_filename + '.pdf')
+            shutil.copy2(file_path, new_file_path)
+            log_message(f"Copied file to: {new_filename}.pdf")
+
+            processed_count[0] += 1
+            file_queue.task_done()
+
+    def schedule_gui_updates():
+        if any(thread.is_alive() for thread in threads):
+            update_progress((processed_count[0] / len(selected_files)) * 100)
+            update_status(selected=len(selected_files), processed=processed_count[0], found=found_count[0], not_found=not_found_count[0])
+            window.after(100, schedule_gui_updates)
         else:
-            not_found_count += 1
-            new_filename = f'not_found{not_found_count}'
+            # Final update after all processing is done
+            update_progress(100)
+            update_status(selected=len(selected_files), processed=processed_count[0], found=found_count[0], not_found=not_found_count[0])
+            log_message("OCR processing completed.")
 
-        # Rename and move the file to the output folder
-        rename_file(file_path, new_filename)
+    # Creating and starting file processing threads
+    num_threads = min(10, len(selected_files))  # Adjust as needed
+    threads = [threading.Thread(target=process_file_thread) for _ in range(num_threads)]
+    for thread in threads:
+        thread.start()
 
-        processed_count += 1
-        update_progress((processed_count / len(selected_files)) * 100)
-        update_status(selected=len(selected_files), processed=processed_count, found=found_count, not_found=not_found_count)
-        log_message(f"Processed: {os.path.basename(file_path)}")
-
-    log_message("OCR processing completed.")
+    # Schedule GUI updates
+    window.after(100, schedule_gui_updates)
 
 def update_progress(value):
     progress_bar['value'] = value
