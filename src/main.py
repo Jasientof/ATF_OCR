@@ -2,9 +2,40 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 import datetime
 import os
+from pathlib import Path
 import pytesseract
 from PIL import Image
 import re
+from pdf2image import convert_from_path
+
+pytesseract.pytesseract.tesseract_cmd = r"lib\tesseract\tesseract.exe"
+
+
+# Regex patterns for different IDs
+regex_patterns = {
+    'MAN': re.compile(r"\b([0O]{1}[0-9]{1}|[0-9]{2})[A-Z]{1}[A-Z0-9]{4}\b"),
+    'SCANIA': re.compile(r"\b[(2|5)]{1}[0-9]{6}\b"),
+    'MERCEDES': re.compile(r"\b[1]{1}[0-9]{9}\b"),
+    'VOLVO': re.compile(r"\b[A-B]{1}[0-9]{6}\b")
+}
+
+# Function to process a single PDF file and extract text using OCR
+def process_pdf(file_path):
+    #poppler_path = os.path.join(os.getcwd(), 'poppler', 'bin')  # Adjust the path accordingly
+    poppler_path = Path(r"lib\poppler-23.11.0\bin")
+    pages = convert_from_path(file_path, 500, poppler_path=poppler_path)
+    extracted_text = ""
+
+    for page in pages:
+        extracted_text += pytesseract.image_to_string(page)
+
+    return extracted_text
+
+# Function to rename a file based on the extracted ID
+def rename_file(original_path, new_name):
+    new_path = os.path.join(output_folder, new_name + ".pdf")
+    os.rename(original_path, new_path)
+    log_message(f"Renamed file to: {new_name}.pdf")
 
 def select_files():
     global selected_files
@@ -24,9 +55,44 @@ def select_output_folder():
     else:
         log_message("No output folder was selected.")
 
+# Updated start_processing function to include OCR and renaming
 def start_processing():
-    log_message(f"Starting OCR processing...")
-    # OCR processing logic will be added here
+    if not selected_files or not output_folder:
+        log_message("Please select files and an output folder.")
+        return
+
+    processed_count = 0
+    found_count = 0
+    not_found_count = 0
+
+    for file_path in selected_files:
+        text = process_pdf(file_path)
+        file_id = None
+
+        # Apply regex patterns to text to find the ID
+        for key, pattern in regex_patterns.items():
+            match = pattern.search(text)
+            if match:
+                file_id = match.group()
+                found_count += 1
+                break
+
+        # Determine the new filename
+        if file_id:
+            new_filename = file_id
+        else:
+            not_found_count += 1
+            new_filename = f'not_found{not_found_count}'
+
+        # Rename and move the file to the output folder
+        rename_file(file_path, new_filename)
+
+        processed_count += 1
+        update_progress((processed_count / len(selected_files)) * 100)
+        update_status(selected=len(selected_files), processed=processed_count, found=found_count, not_found=not_found_count)
+        log_message(f"Processed: {os.path.basename(file_path)}")
+
+    log_message("OCR processing completed.")
 
 def update_progress(value):
     progress_bar['value'] = value
