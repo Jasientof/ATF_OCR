@@ -8,25 +8,81 @@ import re
 from pdf2image import convert_from_path
 import threading
 import shutil
+import json
+import webbrowser
 from queue import Queue
 
 
-pytesseract.pytesseract.tesseract_cmd = r"lib\tesseract\tesseract.exe"
+CONFIG_PATH = Path(__file__).resolve().parent / "config.json"
 
 
-# Regex patterns for different IDs
-regex_patterns = {
-    'MAN': re.compile(r"\b([0O]{1}[0-9]{1}|[0-9]{2})[A-Z]{1}[A-Z0-9]{4}\b"),
-    'SCANIA': re.compile(r"\b[(2|5)]{1}[0-9]{6}\b"),
-    'MERCEDES': re.compile(r"\b[1]{1}[0-9]{9}\b"),
-    'VOLVO': re.compile(r"\b[A-B]{1}[0-9]{6}\b")
-}
+def load_config():
+    if CONFIG_PATH.exists():
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    default = {
+        "tesseract_path": "",
+        "poppler_path": "",
+        "regex_patterns": {
+            "MAN": "\\b([0O]{1}[0-9]{1}|[0-9]{2})[A-Z]{1}[A-Z0-9]{4}\\b",
+            "SCANIA": "\\b[(2|5)]{1}[0-9]{6}\\b",
+            "MERCEDES": "\\b[1]{1}[0-9]{9}\\b",
+            "VOLVO": "\\b[A-B]{1}[0-9]{6}\\b"
+        }
+    }
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(default, f, indent=2)
+    return default
+
+
+def save_config(cfg):
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2)
+
+
+config = load_config()
+
+
+def detect_tesseract(path=None):
+    candidates = [
+        path,
+        os.environ.get("TESSERACT_PATH"),
+        shutil.which("tesseract"),
+    ]
+    for candidate in candidates:
+        if candidate and Path(candidate).exists():
+            return candidate
+    return None
+
+
+def detect_poppler(path=None):
+    candidates = [
+        path,
+        os.environ.get("POPPLER_PATH"),
+    ]
+    pdftoppm = shutil.which("pdftoppm")
+    if pdftoppm:
+        candidates.append(str(Path(pdftoppm).parent))
+    for candidate in candidates:
+        if candidate and Path(candidate).exists():
+            return candidate
+    return None
+
+
+tesseract_cmd = detect_tesseract(config.get("tesseract_path"))
+poppler_bin = detect_poppler(config.get("poppler_path"))
+
+if tesseract_cmd:
+    pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
+
+
+regex_patterns = {k: re.compile(v) for k, v in config.get("regex_patterns", {}).items()}
 
 # Function to process a single PDF file and extract text using OCR
 def process_pdf(file_path):
-    #poppler_path = os.path.join(os.getcwd(), 'poppler', 'bin')  # Adjust the path accordingly
-    poppler_path = Path(r"lib\poppler-23.11.0\bin")
-    pages = convert_from_path(file_path, 500, poppler_path=poppler_path)
+    if not poppler_bin:
+        raise RuntimeError("Poppler path is not configured")
+    pages = convert_from_path(file_path, 500, poppler_path=Path(poppler_bin))
     extracted_text = ""
 
     for page in pages:
@@ -144,11 +200,72 @@ def log_message(message):
     else:
         window.after(0, _insert)
 
+
+def check_dependencies():
+    missing = []
+    if not tesseract_cmd:
+        missing.append("Tesseract")
+    if not poppler_bin:
+        missing.append("Poppler")
+    if missing:
+        msg = (
+            "Missing dependencies: " + ", ".join(missing) +
+            "\nPlease install them or configure their paths in Settings."
+        )
+        messagebox.showerror("Missing Dependencies", msg)
+
 def open_settings():
-    messagebox.showinfo("Settings", "Settings window will be implemented here.")
+    settings_win = tk.Toplevel(window)
+    settings_win.title("Settings")
+
+    tk.Label(settings_win, text="Tesseract Path:").grid(row=0, column=0, sticky="w", pady=2)
+    tess_entry = tk.Entry(settings_win, width=60)
+    tess_entry.insert(0, config.get("tesseract_path", ""))
+    tess_entry.grid(row=0, column=1, pady=2)
+
+    tk.Label(settings_win, text="Poppler Path:").grid(row=1, column=0, sticky="w", pady=2)
+    pop_entry = tk.Entry(settings_win, width=60)
+    pop_entry.insert(0, config.get("poppler_path", ""))
+    pop_entry.grid(row=1, column=1, pady=2)
+
+    tk.Label(settings_win, text="Regex Patterns (JSON):").grid(row=2, column=0, sticky="nw", pady=2)
+    regex_text = scrolledtext.ScrolledText(settings_win, width=60, height=10)
+    regex_text.insert(tk.END, json.dumps(config.get("regex_patterns", {}), indent=2))
+    regex_text.grid(row=2, column=1, pady=2)
+
+    def save():
+        config["tesseract_path"] = tess_entry.get().strip()
+        config["poppler_path"] = pop_entry.get().strip()
+        try:
+            patterns = json.loads(regex_text.get("1.0", tk.END))
+            config["regex_patterns"] = patterns
+        except json.JSONDecodeError as e:
+            messagebox.showerror("Error", f"Invalid JSON: {e}")
+            return
+        save_config(config)
+        global tesseract_cmd, poppler_bin, regex_patterns
+        tesseract_cmd = detect_tesseract(config.get("tesseract_path"))
+        poppler_bin = detect_poppler(config.get("poppler_path"))
+        if tesseract_cmd:
+            pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
+        regex_patterns = {k: re.compile(v) for k, v in config.get("regex_patterns", {}).items()}
+        settings_win.destroy()
+
+    tk.Button(settings_win, text="Save", command=save).grid(row=3, column=0, columnspan=2, pady=5)
 
 def open_help():
-    messagebox.showinfo("Help", "Help information will be implemented here.")
+    help_win = tk.Toplevel(window)
+    help_win.title("Help")
+    text = scrolledtext.ScrolledText(help_win, width=80, height=25)
+    readme_path = Path(__file__).resolve().parents[1] / "README.md"
+    try:
+        with open(readme_path, "r", encoding="utf-8") as f:
+            content = f.read()
+    except OSError:
+        content = "README not found."
+    text.insert(tk.END, content)
+    text.configure(state="disabled")
+    text.pack(fill=tk.BOTH, expand=True)
 
 def setup_gui():
     global window, log_area, progress_bar, status_label
@@ -209,6 +326,7 @@ def setup_gui():
     log_area = scrolledtext.ScrolledText(frame, wrap=tk.WORD, width=60, height=10)
     log_area.grid(row=4, column=0, columnspan=2, pady=10, sticky='ew')
 
+    window.after(100, check_dependencies)
     return window
 
 selected_files = []  # Global variable to store selected files

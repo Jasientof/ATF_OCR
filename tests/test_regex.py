@@ -1,25 +1,15 @@
 import pytest
 from pathlib import Path
 import re
+import json
 
 
 def load_regex_patterns():
-    """Load the regex_patterns dictionary from src/main.py without importing
-    the full module, which has heavy dependencies."""
-    file_path = Path(__file__).resolve().parents[1] / "src" / "main.py"
-    lines = []
-    capture = False
-    with open(file_path, "r") as f:
-        for line in f:
-            if line.startswith("regex_patterns"):
-                capture = True
-            if capture:
-                lines.append(line)
-                if line.strip().endswith("}"):
-                    break
-    namespace = {"re": re}
-    exec("".join(lines), namespace)
-    return namespace["regex_patterns"]
+    """Load regex patterns from the JSON configuration."""
+    cfg_path = Path(__file__).resolve().parents[1] / "src" / "config.json"
+    with open(cfg_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return {k: re.compile(v) for k, v in data["regex_patterns"].items()}
 
 
 regex_patterns = load_regex_patterns()
