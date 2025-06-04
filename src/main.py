@@ -4,13 +4,11 @@ import datetime
 import os
 from pathlib import Path
 import pytesseract
-from PIL import Image
 import re
 from pdf2image import convert_from_path
 import threading
 import shutil
 from queue import Queue
-import time
 
 
 pytesseract.pytesseract.tesseract_cmd = r"lib\tesseract\tesseract.exe"
@@ -118,7 +116,7 @@ def start_processing():
 
     # Creating and starting file processing threads
     num_threads = min(10, len(selected_files))  # Adjust as needed
-    threads = [threading.Thread(target=process_file_thread) for _ in range(num_threads)]
+    threads = [threading.Thread(target=process_file_thread, daemon=True) for _ in range(num_threads)]
     for thread in threads:
         thread.start()
 
@@ -134,8 +132,17 @@ def update_status(selected=0, processed=0, found=0, not_found=0):
     status_label.config(text=status_text)
     
 def log_message(message):
+    """Thread-safe logging of messages to the GUI."""
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    log_area.insert(tk.END, f"[{timestamp}] {message}\n")
+
+    def _insert():
+        log_area.insert(tk.END, f"[{timestamp}] {message}\n")
+        log_area.yview(tk.END)
+
+    if threading.current_thread() is threading.main_thread():
+        _insert()
+    else:
+        window.after(0, _insert)
 
 def open_settings():
     messagebox.showinfo("Settings", "Settings window will be implemented here.")
