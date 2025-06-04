@@ -1,0 +1,10 @@
+{
+  "tesseract_path": "",
+  "poppler_path": "",
+  "regex_patterns": {
+    "MAN": "\\b([0O]{1}[0-9]{1}|[0-9]{2})[A-Z]{1}[A-Z0-9]{4}\\b",
+    "SCANIA": "\\b[(2|5)]{1}[0-9]{6}\\b",
+    "MERCEDES": "\\b[1]{1}[0-9]{9}\\b",
+    "VOLVO": "\\b[A-B]{1}[0-9]{6}\\b"
+  }
+}
